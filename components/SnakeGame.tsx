@@ -630,7 +630,7 @@ export const SnakeGame = () => {
                     ₹{(currentValue + wallet).toLocaleString("en-IN")}
                   </p>
                   <p className={`text-sm font-semibold mt-1 ${currentValue + wallet >= STARTING_WALLET ? "text-green-400" : "text-red-400"}`}>
-                    {currentValue + wallet >= STARTING_WALLET ? "+" : ""}₹{(currentValue + wallet - STARTING_WALLET).toLocaleString("en-IN")} from start
+                    {currentValue + wallet >= STARTING_WALLET ? "+" : "-"}₹{Math.abs(currentValue + wallet - STARTING_WALLET).toLocaleString("en-IN")} from start
                   </p>
                 </div>
                 <div className="border-t border-slate-700 pt-3 flex gap-4 justify-center">
@@ -657,7 +657,7 @@ export const SnakeGame = () => {
                     <p className="text-[10px] text-slate-500 uppercase mb-1">
                       Portfolio
                     </p>
-                    <p className="text-base font-bold text-blue-400">
+                    <p className="text-base font-bold text-white">
                       ₹{currentValue.toLocaleString("en-IN")}
                     </p>
                   </div>
@@ -666,8 +666,8 @@ export const SnakeGame = () => {
                     <p className="text-[10px] text-slate-500 uppercase mb-1">
                       Wallet
                     </p>
-                    <p className="text-base font-bold text-green-400">
-                      ₹{wallet.toLocaleString("en-IN")}
+                    <p className="text-base font-bold text-white">
+                      {wallet < 0 ? "-" : ""}₹{Math.abs(wallet).toLocaleString("en-IN")}
                     </p>
                   </div>
                 </div>
@@ -676,7 +676,7 @@ export const SnakeGame = () => {
                     Returns
                   </p>
                   <p className={`text-base font-bold ${returns >= 0 ? "text-green-400" : "text-red-400"}`}>
-                    {returns >= 0 ? "+" : ""}₹{returns.toLocaleString("en-IN")}
+                    {returns >= 0 ? "+" : "-"}₹{Math.abs(returns).toLocaleString("en-IN")}
                   </p>
                 </div>
               </div>
@@ -714,8 +714,8 @@ export const SnakeGame = () => {
           <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">
             Wallet
           </p>
-          <p className={`text-3xl font-bold ${wallet >= 0 ? "text-green-400" : "text-red-400"}`}>
-            ₹{wallet.toLocaleString("en-IN")}
+          <p className={`text-3xl font-bold ${wallet >= 0 ? "text-white" : "text-red-400"}`}>
+            {wallet < 0 ? "-" : ""}₹{Math.abs(wallet).toLocaleString("en-IN")}
           </p>
         </div>
 
@@ -725,7 +725,7 @@ export const SnakeGame = () => {
             <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">
               {playerName.trim() ? `${playerName.trim()}'s Portfolio` : "Current Value"}
             </p>
-            <p className="text-3xl font-bold text-blue-400">
+            <p className="text-3xl font-bold text-white">
               ₹{currentValue.toLocaleString("en-IN")}
             </p>
           </div>
@@ -734,7 +734,7 @@ export const SnakeGame = () => {
               Returns
             </p>
             <p className={`text-xl font-bold ${returns >= 0 ? "text-green-400" : "text-red-400"}`}>
-              {returns >= 0 ? "+" : ""}₹{returns.toLocaleString("en-IN")}
+              {returns >= 0 ? "+" : "-"}₹{Math.abs(returns).toLocaleString("en-IN")}
             </p>
           </div>
         </div>
