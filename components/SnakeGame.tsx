@@ -556,7 +556,7 @@ export const SnakeGame = () => {
         <div className="canvas-container relative">
           <canvas
             ref={canvasRef}
-            aria-label="Nifty 50 Snake game board"
+            aria-label="Portfolio Snake game board"
             tabIndex={0}
             role="img"
             style={{ width: canvasSize, height: canvasSize }}
@@ -701,8 +701,8 @@ export const SnakeGame = () => {
         {/* Title */}
         <div>
           <h1 className="text-3xl font-extrabold tracking-tighter">
-            <span className="text-blue-400">NIFTY</span>
-            <span className="text-white">50</span>
+            <span className="text-blue-400">PORTFOLIO</span>
+            <span className="text-white"> SNAKE</span>
           </h1>
           <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">
             Market Simulator
