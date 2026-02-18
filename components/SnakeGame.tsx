@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect, useCallback } from "react";
 import { companies } from "@/lib/companies";
-import type { Position, Company, Food, GameState } from "@/lib/types";
+import type { Position, Company, Food, FoodKind, GameState, PortfolioEntry } from "@/lib/types";
 
 const GRID_SIZE = 20;
 const GAME_SPEED_START = 150;
@@ -12,7 +12,18 @@ const BG_COLOR = "#0f172a";
 const GRID_LINE_COLOR = "#1e293b";
 const EMPTY_BODY = "#475569";
 const EMPTY_HEAD = "#94a3b8";
-const EMPTY_BLOCK: Company = { t: "", n: "", c: "#64748b", logo: "" };
+const EMPTY_BLOCK: PortfolioEntry = {
+  company: { t: "", n: "", c: "#64748b", logo: "", p: 0 },
+  costBasis: 0,
+};
+const PRICE_TICK_MS = 500;
+const STARTING_WALLET = 25_000;
+const BUY_ONLY_COUNT = 8;
+
+const FOOD_BUY_BG = "#166534";
+const FOOD_SELL_BG = "#991b1b";
+const FOOD_LIFE_MIN = 5_000;
+const FOOD_LIFE_MAX = 10_000;
 
 const LOGO_PADDING_RATIO = 0.1;
 const FOOD_PADDING_RATIO = 0.12;
@@ -48,7 +59,7 @@ const drawFoods = (
     const fx = f.x * tileSize;
     const fy = f.y * tileSize;
 
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = f.kind === "buy" ? FOOD_BUY_BG : FOOD_SELL_BG;
     ctx.fillRect(fx + 1, fy + 1, tileSize - 2, tileSize - 2);
 
     const img = logoCache.get(f.company.logo);
@@ -61,7 +72,7 @@ const drawFoods = (
         tileSize - pad * 2
       );
     } else {
-      ctx.fillStyle = "#334155";
+      ctx.fillStyle = "#ffffff";
       ctx.font = `bold ${Math.round(tileSize * 0.35)}px Arial`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -77,14 +88,14 @@ const drawFoods = (
 const drawSnake = (
   ctx: CanvasRenderingContext2D,
   snake: Position[],
-  portfolio: Company[],
+  portfolio: PortfolioEntry[],
   logoCache: Map<string, HTMLImageElement>,
   tileSize: number
 ) => {
   const pad = Math.round(tileSize * LOGO_PADDING_RATIO);
   for (let i = snake.length - 1; i >= 0; i--) {
     const part = snake[i];
-    const company = portfolio[i];
+    const { company } = portfolio[i];
     const px = part.x * tileSize;
     const py = part.y * tileSize;
     const isHead = i === 0;
@@ -142,15 +153,20 @@ export const SnakeGame = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const snakeRef = useRef<Position[]>([]);
-  const portfolioRef = useRef<Company[]>([]);
+  const portfolioRef = useRef<PortfolioEntry[]>([]);
   const foodsRef = useRef<Food[]>([]);
   const directionRef = useRef({ x: 0, y: 0 });
   const nextDirectionRef = useRef({ x: 0, y: 0 });
   const gameLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const priceTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const companyIndexRef = useRef(1);
-  const gameSpeedRef = useRef(GAME_SPEED_START);
   const isRunningRef = useRef(false);
   const scoreRef = useRef(0);
+  const buyCountRef = useRef(0);
+  const sellCountRef = useRef(0);
+  const walletRef = useRef(STARTING_WALLET);
+  const currentPricesRef = useRef<Map<string, number>>(new Map());
+  const spawnCountRef = useRef(0);
   const tickRef = useRef<() => void>(() => {});
   const logoCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const canvasSizeRef = useRef(0);
@@ -158,8 +174,14 @@ export const SnakeGame = () => {
 
   const [canvasSize, setCanvasSize] = useState(0);
   const [score, setScore] = useState(0);
+  const [buyCount, setBuyCount] = useState(0);
+  const [sellCount, setSellCount] = useState(0);
+  const [wallet, setWallet] = useState(STARTING_WALLET);
+  const [currentValue, setCurrentValue] = useState(0);
+  const [returns, setReturns] = useState(0);
   const [gameState, setGameState] = useState<GameState>("idle");
   const [currentTarget, setCurrentTarget] = useState<Company | null>(null);
+  const [playerName, setPlayerName] = useState("");
 
   useEffect(() => {
     const cache = logoCacheRef.current;
@@ -192,10 +214,72 @@ export const SnakeGame = () => {
     drawGrid(ctx, size, size / GRID_SIZE);
   }, []);
 
+  const initPrices = () => {
+    const prices = currentPricesRef.current;
+    prices.clear();
+    for (const co of companies) {
+      prices.set(co.t, co.p);
+    }
+  };
+
+  const recomputePortfolio = () => {
+    const prices = currentPricesRef.current;
+    let totalCurrent = 0;
+    let totalCost = 0;
+    for (const entry of portfolioRef.current) {
+      if (!entry.company.t) continue;
+      totalCurrent += prices.get(entry.company.t) ?? entry.company.p;
+      totalCost += entry.costBasis;
+    }
+    setCurrentValue(totalCurrent);
+    setReturns(totalCurrent - totalCost);
+  };
+
+  const fluctuatePrices = () => {
+    const prices = currentPricesRef.current;
+    for (const co of companies) {
+      const current = prices.get(co.t) ?? co.p;
+      const change = (Math.random() - 0.5) * 0.08;
+      const newPrice = Math.max(Math.round(current * (1 + change)), Math.round(co.p * 0.1));
+      prices.set(co.t, newPrice);
+    }
+    recomputePortfolio();
+  };
+
+  const clearPriceTick = () => {
+    if (priceTickRef.current) {
+      clearInterval(priceTickRef.current);
+      priceTickRef.current = null;
+    }
+  };
+
+  const startPriceTick = () => {
+    clearPriceTick();
+    priceTickRef.current = setInterval(fluctuatePrices, PRICE_TICK_MS);
+  };
+
   const spawnOneFood = () => {
-    const nextCo = companies[companyIndexRef.current % companies.length];
-    companyIndexRef.current++;
-    setCurrentTarget(nextCo);
+    spawnCountRef.current++;
+
+    const ownedEntries = portfolioRef.current.filter((e) => e.company.t !== "");
+
+    let kind: FoodKind;
+    if (spawnCountRef.current <= BUY_ONLY_COUNT || ownedEntries.length === 0) {
+      kind = "buy";
+    } else {
+      kind = Math.random() < 0.5 ? "buy" : "sell";
+    }
+
+    let foodCompany: Company;
+    if (kind === "sell") {
+      foodCompany =
+        ownedEntries[Math.floor(Math.random() * ownedEntries.length)].company;
+    } else {
+      foodCompany = companies[companyIndexRef.current % companies.length];
+      companyIndexRef.current++;
+    }
+
+    setCurrentTarget(foodCompany);
 
     let valid = false;
     let fx = 0;
@@ -226,7 +310,14 @@ export const SnakeGame = () => {
     }
 
     if (valid) {
-      foodsRef.current.push({ x: fx, y: fy, company: nextCo });
+      const lifespan = FOOD_LIFE_MIN + Math.random() * (FOOD_LIFE_MAX - FOOD_LIFE_MIN);
+      foodsRef.current.push({
+        x: fx,
+        y: fy,
+        company: foodCompany,
+        kind,
+        expiresAt: Date.now() + lifespan,
+      });
     }
   };
 
@@ -247,13 +338,15 @@ export const SnakeGame = () => {
     clearLoop();
     gameLoopRef.current = setInterval(
       () => tickRef.current(),
-      gameSpeedRef.current
+      GAME_SPEED_START
     );
   };
 
   const handleGameOver = () => {
     isRunningRef.current = false;
     clearLoop();
+    clearPriceTick();
+    recomputePortfolio();
     setGameState("gameOver");
   };
 
@@ -262,6 +355,13 @@ export const SnakeGame = () => {
     const cs = canvasSizeRef.current;
     const ts = tileSizeRef.current;
     if (!ctx || !isRunningRef.current || !cs) return;
+
+    const now = Date.now();
+    const beforeCount = foodsRef.current.length;
+    foodsRef.current = foodsRef.current.filter((f) => f.expiresAt > now);
+    if (foodsRef.current.length < beforeCount) {
+      replenishFoods();
+    }
 
     directionRef.current = { ...nextDirectionRef.current };
     const snake = snakeRef.current;
@@ -290,16 +390,59 @@ export const SnakeGame = () => {
 
     if (eatenFoodIndex !== -1) {
       const eatenFood = foodsRef.current[eatenFoodIndex];
-      portfolioRef.current.unshift(eatenFood.company);
       foodsRef.current.splice(eatenFoodIndex, 1);
+
+      const prices = currentPricesRef.current;
+      const livePrice = prices.get(eatenFood.company.t) ?? eatenFood.company.p;
+
+      if (eatenFood.kind === "buy") {
+        while (walletRef.current < livePrice) {
+          let earliestOwned = -1;
+          for (let i = portfolioRef.current.length - 1; i >= 1; i--) {
+            if (portfolioRef.current[i].company.t !== "") {
+              earliestOwned = i;
+              break;
+            }
+          }
+          if (earliestOwned === -1 || snake.length <= 1) break;
+
+          const soldEntry = portfolioRef.current[earliestOwned];
+          const soldPrice = prices.get(soldEntry.company.t) ?? soldEntry.company.p;
+          walletRef.current += soldPrice;
+          portfolioRef.current.splice(earliestOwned, 1);
+          snake.splice(earliestOwned, 1);
+          sellCountRef.current++;
+        }
+
+        portfolioRef.current.unshift({ company: eatenFood.company, costBasis: livePrice });
+        walletRef.current -= livePrice;
+        buyCountRef.current++;
+      } else {
+        snake.pop();
+
+        let sellIndex = -1;
+        for (let i = portfolioRef.current.length - 1; i >= 1; i--) {
+          if (portfolioRef.current[i].company.t === eatenFood.company.t) {
+            sellIndex = i;
+            break;
+          }
+        }
+
+        if (sellIndex !== -1 && snake.length > 1) {
+          portfolioRef.current.splice(sellIndex, 1);
+          snake.splice(sellIndex, 1);
+          walletRef.current += livePrice;
+          sellCountRef.current++;
+        }
+      }
+
+      setWallet(walletRef.current);
+      recomputePortfolio();
+      setBuyCount(buyCountRef.current);
+      setSellCount(sellCountRef.current);
 
       scoreRef.current++;
       setScore(scoreRef.current);
-
-      if (scoreRef.current % 5 === 0 && gameSpeedRef.current > 60) {
-        gameSpeedRef.current -= 10;
-        startLoop();
-      }
 
       replenishFoods();
     } else {
@@ -329,16 +472,27 @@ export const SnakeGame = () => {
     directionRef.current = { x: 1, y: 0 };
     nextDirectionRef.current = { x: 1, y: 0 };
     scoreRef.current = 0;
+    buyCountRef.current = 0;
+    sellCountRef.current = 0;
+    walletRef.current = STARTING_WALLET;
+    spawnCountRef.current = 0;
     companyIndexRef.current = 1;
-    gameSpeedRef.current = GAME_SPEED_START;
     foodsRef.current = [];
     isRunningRef.current = true;
 
+    initPrices();
+
     setScore(0);
+    setBuyCount(0);
+    setSellCount(0);
+    setWallet(STARTING_WALLET);
+    setCurrentValue(0);
+    setReturns(0);
     setGameState("playing");
 
     replenishFoods();
     startLoop();
+    startPriceTick();
   };
 
   const handleInput = useCallback((key: string) => {
@@ -389,10 +543,11 @@ export const SnakeGame = () => {
   }, [handleInput]);
 
   useEffect(() => {
-    return () => clearLoop();
+    return () => {
+      clearLoop();
+      clearPriceTick();
+    };
   }, []);
-
-  const portfolioValue = score * 1000 + 100;
 
   return (
     <main className="h-screen w-screen flex overflow-hidden">
@@ -416,12 +571,38 @@ export const SnakeGame = () => {
               <h2 className="text-3xl font-bold text-white mb-2">
                 Market Open
               </h2>
-              <p className="text-sm text-slate-400 mb-8 text-center max-w-[300px]">
+              <p className="text-sm text-slate-400 mb-6 text-center max-w-[300px]">
                 Navigate the market. Acquire companies. Avoid bankruptcy (walls).
               </p>
+              <div className="w-full max-w-[280px] mb-8">
+                <label
+                  htmlFor="player-name"
+                  className="block text-[10px] text-slate-500 uppercase tracking-widest mb-2"
+                >
+                  Your Name
+                </label>
+                <input
+                  id="player-name"
+                  type="text"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && playerName.trim()) {
+                      handleStartGame();
+                    }
+                  }}
+                  placeholder="Enter your name..."
+                  maxLength={20}
+                  autoFocus
+                  className="w-full bg-slate-800 border border-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-lg px-4 py-3 text-white text-sm placeholder:text-slate-600 outline-none transition"
+                  aria-label="Enter your name to start the game"
+                  tabIndex={0}
+                />
+              </div>
               <button
                 onClick={handleStartGame}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-10 py-4 rounded-lg text-sm font-bold uppercase tracking-wider transition hover:scale-105 active:scale-95 shadow-lg shadow-blue-900/50"
+                disabled={!playerName.trim()}
+                className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white px-10 py-4 rounded-lg text-sm font-bold uppercase tracking-wider transition hover:scale-105 active:scale-95 shadow-lg shadow-blue-900/50 disabled:shadow-none disabled:hover:scale-100"
                 aria-label="Start trading game"
                 tabIndex={0}
               >
@@ -440,19 +621,70 @@ export const SnakeGame = () => {
               <p className="text-slate-400 text-sm mb-8">
                 Market correction triggered.
               </p>
-              <div className="bg-slate-800 p-6 rounded-lg mb-8 text-center w-56">
-                <p className="text-xs text-slate-500 uppercase mb-1">
-                  Final Portfolio
-                </p>
-                <p className="text-2xl font-bold text-white">
-                  {score} Companies
-                </p>
-                <p className="text-lg font-bold text-green-400 mt-1">
-                  ₹{portfolioValue.toLocaleString("en-IN")}
-                </p>
+              <div className="bg-slate-800 p-6 rounded-lg mb-8 text-center w-64 space-y-3">
+                <div>
+                  <p className="text-xs text-slate-500 uppercase mb-1">
+                    Total Worth
+                  </p>
+                  <p className="text-3xl font-bold text-white">
+                    ₹{(currentValue + wallet).toLocaleString("en-IN")}
+                  </p>
+                  <p className={`text-sm font-semibold mt-1 ${currentValue + wallet >= STARTING_WALLET ? "text-green-400" : "text-red-400"}`}>
+                    {currentValue + wallet >= STARTING_WALLET ? "+" : ""}₹{(currentValue + wallet - STARTING_WALLET).toLocaleString("en-IN")} from start
+                  </p>
+                </div>
+                <div className="border-t border-slate-700 pt-3 flex gap-4 justify-center">
+                  <div className="flex-1">
+                    <p className="text-xs text-slate-500 uppercase mb-1">
+                      Bought
+                    </p>
+                    <p className="text-2xl font-bold text-green-400">
+                      {buyCount}
+                    </p>
+                  </div>
+                  <div className="w-px bg-slate-700" />
+                  <div className="flex-1">
+                    <p className="text-xs text-slate-500 uppercase mb-1">
+                      Sold
+                    </p>
+                    <p className="text-2xl font-bold text-red-400">
+                      {sellCount}
+                    </p>
+                  </div>
+                </div>
+                <div className="border-t border-slate-700 pt-3 flex gap-4 justify-center">
+                  <div className="flex-1">
+                    <p className="text-[10px] text-slate-500 uppercase mb-1">
+                      Portfolio
+                    </p>
+                    <p className="text-base font-bold text-blue-400">
+                      ₹{currentValue.toLocaleString("en-IN")}
+                    </p>
+                  </div>
+                  <div className="w-px bg-slate-700" />
+                  <div className="flex-1">
+                    <p className="text-[10px] text-slate-500 uppercase mb-1">
+                      Wallet
+                    </p>
+                    <p className="text-base font-bold text-green-400">
+                      ₹{wallet.toLocaleString("en-IN")}
+                    </p>
+                  </div>
+                </div>
+                <div className="border-t border-slate-700 pt-3">
+                  <p className="text-xs text-slate-500 uppercase mb-1">
+                    Returns
+                  </p>
+                  <p className={`text-base font-bold ${returns >= 0 ? "text-green-400" : "text-red-400"}`}>
+                    {returns >= 0 ? "+" : ""}₹{returns.toLocaleString("en-IN")}
+                  </p>
+                </div>
               </div>
               <button
-                onClick={handleStartGame}
+                onClick={() => {
+                  setPlayerName("");
+                  setGameState("idle");
+                }}
                 className="bg-white text-slate-900 hover:bg-slate-200 px-10 py-4 rounded-lg text-sm font-bold uppercase tracking-wider transition hover:scale-105 active:scale-95"
                 aria-label="Re-invest and play again"
                 tabIndex={0}
@@ -477,17 +709,34 @@ export const SnakeGame = () => {
           </p>
         </div>
 
-        {/* Portfolio Value */}
+        {/* Wallet */}
         <div className="bg-slate-800/60 border border-slate-700/50 p-4 rounded-lg">
           <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">
-            Portfolio Value
+            Wallet
           </p>
-          <p className="text-3xl font-bold text-green-400">
-            ₹{portfolioValue.toLocaleString("en-IN")}
+          <p className={`text-3xl font-bold ${wallet >= 0 ? "text-green-400" : "text-red-400"}`}>
+            ₹{wallet.toLocaleString("en-IN")}
           </p>
-          <p className="text-xs text-slate-500 mt-1">
-            {score} {score === 1 ? "company" : "companies"} acquired
-          </p>
+        </div>
+
+        {/* Portfolio */}
+        <div className="bg-slate-800/60 border border-slate-700/50 p-4 rounded-lg space-y-3">
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">
+              {playerName.trim() ? `${playerName.trim()}'s Portfolio` : "Current Value"}
+            </p>
+            <p className="text-3xl font-bold text-blue-400">
+              ₹{currentValue.toLocaleString("en-IN")}
+            </p>
+          </div>
+          <div className="border-t border-slate-700/50 pt-2">
+            <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">
+              Returns
+            </p>
+            <p className={`text-xl font-bold ${returns >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {returns >= 0 ? "+" : ""}₹{returns.toLocaleString("en-IN")}
+            </p>
+          </div>
         </div>
 
         {/* New Listing Panel */}
